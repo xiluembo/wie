@@ -9,7 +9,7 @@ use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
 use crate::classes::javax::microedition::lcdui::{Command, CommandListener, Display, Font, Graphics, Item, Ticker};
 
-use crate::classes::net::wie::{KeyboardEventType, MIDPKeyCode};
+use crate::classes::net::wie::{CommandEvent, EventQueue, KeyboardEventType, MIDPKeyCode};
 
 const COMMAND_BACK: i32 = 2;
 const COMMAND_CANCEL: i32 = 3;
@@ -183,20 +183,28 @@ impl Displayable {
     }
 
     async fn get_title(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<String>> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::getTitle({this:?})");
+
         jvm.get_field(&this, "title", "Ljava/lang/String;").await
     }
 
     async fn set_title(jvm: &Jvm, _context: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, title: ClassInstanceRef<String>) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::setTitle({this:?}, {title:?})");
+
         jvm.put_field(&mut this, "title", "Ljava/lang/String;", title).await?;
         jvm.invoke_virtual(&this, "javax/microedition/lcdui/Displayable", "decorationChanged", "()V", ())
             .await
     }
 
     async fn get_ticker(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<Ticker>> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::getTicker({this:?})");
+
         jvm.get_field(&this, "ticker", "Ljavax/microedition/lcdui/Ticker;").await
     }
 
     async fn set_ticker(jvm: &Jvm, context: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, ticker: ClassInstanceRef<Ticker>) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::setTicker({this:?}, {ticker:?})");
+
         let previous: ClassInstanceRef<Ticker> = jvm.get_field(&this, "ticker", "Ljavax/microedition/lcdui/Ticker;").await?;
         if (previous.is_null() && ticker.is_null()) || (!previous.is_null() && !ticker.is_null() && previous.identity() == ticker.identity()) {
             return Ok(());
@@ -213,6 +221,8 @@ impl Displayable {
     }
 
     async fn is_shown(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::isShown({this:?})");
+
         let display: ClassInstanceRef<Display> = jvm.get_field(&this, "currentDisplay", "Ljavax/microedition/lcdui/Display;").await?;
         if display.is_null() {
             return Ok(false);
@@ -299,11 +309,15 @@ impl Displayable {
         mut this: ClassInstanceRef<Self>,
         listener: ClassInstanceRef<CommandListener>,
     ) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::setCommandListener({this:?}, {listener:?})");
+
         jvm.put_field(&mut this, "commandListener", "Ljavax/microedition/lcdui/CommandListener;", listener)
             .await
     }
 
     async fn size_changed(_jvm: &Jvm, _context: &mut WieJvmContext, _this: ClassInstanceRef<Self>, _width: i32, _height: i32) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::sizeChanged({_this:?}, {_width}, {_height})");
+
         Ok(())
     }
 
@@ -326,10 +340,14 @@ impl Displayable {
     }
 
     async fn get_display(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<Display>> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::getDisplay({this:?})");
+
         jvm.get_field(&this, "currentDisplay", "Ljavax/microedition/lcdui/Display;").await
     }
 
     async fn is_full_screen(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::isFullScreen({this:?})");
+
         jvm.get_field(&this, "isInFullScreenMode", "Z").await
     }
 
@@ -354,6 +372,8 @@ impl Displayable {
     }
 
     async fn request_repaint(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::requestRepaint({this:?})");
+
         let display: ClassInstanceRef<Display> = jvm.get_field(&this, "currentDisplay", "Ljavax/microedition/lcdui/Display;").await?;
         if !display.is_null() {
             let _: () = jvm
@@ -365,6 +385,8 @@ impl Displayable {
     }
 
     async fn decoration_changed(jvm: &Jvm, _context: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::decorationChanged({this:?})");
+
         jvm.put_field(&mut this, "sizeDirty", "Z", true).await?;
         jvm.put_field(&mut this, "commandMenuOpen", "Z", false).await?;
         jvm.put_field(&mut this, "commandMenuIndex", "I", -1).await?;
@@ -385,6 +407,8 @@ impl Displayable {
     }
 
     async fn get_command_count(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::getCommandCount({this:?})");
+
         let commands: ClassInstanceRef<Vector> = jvm.get_field(&this, "commands", "Ljava/util/Vector;").await?;
         jvm.invoke_virtual(&commands, "java/util/Vector", "size", "()I", ()).await
     }
@@ -395,12 +419,16 @@ impl Displayable {
         this: ClassInstanceRef<Self>,
         index: i32,
     ) -> JvmResult<ClassInstanceRef<Command>> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::getCommandAt({this:?}, {index})");
+
         let commands: ClassInstanceRef<Vector> = jvm.get_field(&this, "commands", "Ljava/util/Vector;").await?;
         jvm.invoke_virtual(&commands, "java/util/Vector", "elementAt", "(I)Ljava/lang/Object;", (index,))
             .await
     }
 
     async fn dispatch_command_at(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>, index: i32) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::dispatchCommandAt({this:?}, {index})");
+
         let commands: ClassInstanceRef<Vector> = jvm.get_field(&this, "commands", "Ljava/util/Vector;").await?;
         let command: ClassInstanceRef<Command> = jvm
             .invoke_virtual(&commands, "java/util/Vector", "elementAt", "(I)Ljava/lang/Object;", (index,))
@@ -423,18 +451,25 @@ impl Displayable {
         this: ClassInstanceRef<Self>,
         command: ClassInstanceRef<Command>,
     ) -> JvmResult<bool> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::dispatchCommand({this:?}, {command:?})");
+
         let listener: ClassInstanceRef<CommandListener> = jvm
             .get_field(&this, "commandListener", "Ljavax/microedition/lcdui/CommandListener;")
             .await?;
         if !listener.is_null() {
-            let _: () = jvm
-                .invoke_virtual(
-                    &listener,
-                    "javax/microedition/lcdui/CommandListener",
-                    "commandAction",
-                    "(Ljavax/microedition/lcdui/Command;Ljavax/microedition/lcdui/Displayable;)V",
-                    (command, this),
+            let event: ClassInstanceRef<CommandEvent> = jvm
+                .new_class(
+                    "net/wie/CommandEvent",
+                    "(Ljavax/microedition/lcdui/CommandListener;Ljavax/microedition/lcdui/Command;Ljavax/microedition/lcdui/Displayable;)V",
+                    (listener.clone(), command, this),
                 )
+                .await?
+                .into();
+            let queue: ClassInstanceRef<EventQueue> = jvm
+                .invoke_static("net/wie/EventQueue", "getEventQueue", "()Lnet/wie/EventQueue;", ())
+                .await?;
+            let _: () = jvm
+                .invoke_virtual(&queue, "net/wie/EventQueue", "callSerially", "(Ljava/lang/Runnable;)V", (event,))
                 .await?;
         }
 
@@ -447,6 +482,8 @@ impl Displayable {
         _this: ClassInstanceRef<Self>,
         _item: ClassInstanceRef<Item>,
     ) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::checkItemMutation({_this:?}, {_item:?})");
+
         Ok(())
     }
 
@@ -457,6 +494,8 @@ impl Displayable {
         _item: ClassInstanceRef<Item>,
         _layout_changed: bool,
     ) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::itemInvalidated({_this:?}, {_item:?}, {_layout_changed})");
+
         Ok(())
     }
 
@@ -466,6 +505,8 @@ impl Displayable {
         _this: ClassInstanceRef<Self>,
         _item: ClassInstanceRef<Item>,
     ) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::itemStateChanged({_this:?}, {_item:?})");
+
         Err(jvm.exception("java/lang/IllegalStateException", "Item is not owned by a Form").await)
     }
 
@@ -509,6 +550,8 @@ impl Displayable {
     }
 
     async fn notify_size_changed(jvm: &Jvm, context: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::notifySizeChanged({this:?})");
+
         if jvm.get_field::<bool>(&this, "sizeNotifying", "Z").await? {
             return Ok(());
         }
@@ -653,6 +696,8 @@ impl Displayable {
     }
 
     async fn route_key_event(jvm: &Jvm, _context: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, event_type: i32, code: i32) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::routeKeyEvent({this:?}, {event_type}, {code})");
+
         let command_layout = Self::command_layout(jvm, &this).await?;
         let mut menu_open: bool = jvm.get_field(&this, "commandMenuOpen", "Z").await?;
 
@@ -774,6 +819,8 @@ impl Displayable {
         y: i32,
         height: i32,
     ) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::paintCommands({this:?}, {graphics:?}, {width}, {y}, {height})");
+
         let command_layout = Self::command_layout(jvm, &this).await?;
         let menu_open: bool = jvm.get_field(&this, "commandMenuOpen", "Z").await?;
         if menu_open && command_layout.remaining.len() > 1 && y > 0 && width > 0 {
