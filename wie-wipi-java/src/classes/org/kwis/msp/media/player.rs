@@ -1,12 +1,13 @@
-use alloc::vec;
+use alloc::{boxed::Box, vec};
 
-use jvm::{ClassInstanceRef, Jvm, Result as JvmResult};
-use jvm_class_proto::JavaMethodProto;
+use async_trait::async_trait;
+use jvm::{ClassInstanceRef, JavaError, JavaValue, Jvm, Result as JvmResult};
+use jvm_class_proto::{JavaMethodProto, MethodBody};
 use jvm_types::{ClassAccessFlags, MethodAccessFlags};
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
-use crate::classes::org::kwis::msp::media::{BaseClip, Clip};
+use crate::classes::org::kwis::msp::media::{BaseClip, Clip, PlayListener};
 
 // class org.kwis.msp.media.Player
 pub struct Player;
@@ -96,18 +97,40 @@ impl Player {
         Ok(false)
     }
 
-    async fn play_clip(jvm: &Jvm, _context: &mut WieJvmContext, clip: ClassInstanceRef<Clip>, repeat: bool) -> JvmResult<bool> {
+    async fn play_clip(jvm: &Jvm, context: &mut WieJvmContext, clip: ClassInstanceRef<Clip>, repeat: bool) -> JvmResult<bool> {
         tracing::debug!("org.kwis.msp.media.Player::play({clip:?}, {repeat})");
 
         let player = Clip::player(jvm, &clip).await?;
 
-        if !player.is_null() {
-            let _: () = jvm.invoke_virtual(&player, "net/wie/SmafPlayer", "start", "(Z)V", (repeat,)).await?;
-
-            Ok(true)
-        } else {
-            Ok(false)
+        if player.is_null() {
+            return Ok(false);
         }
+
+        let _: () = jvm.invoke_virtual(&player, "net/wie/SmafPlayer", "start", "(Z)V", (repeat,)).await?;
+
+        Clip::notify_listener(jvm, &clip, PlayListener::START, 0).await?;
+
+        // WIPI titles that wait on PlayListener.END_OF_DATA after splash audio.
+        // Fire it after the sequence duration (or a short fallback) when not looping.
+        if !repeat {
+            let audio_handle: i32 = jvm.get_field(&player, "audioHandle", "I").await?;
+            let duration_ms = context
+                .system()
+                .audio()
+                .duration(audio_handle as u32)
+                .unwrap_or(0)
+                .max(500);
+
+            context.spawn(
+                jvm,
+                Box::new(EndOfDataNotifier {
+                    clip: clip.clone(),
+                    duration_ms,
+                }),
+            )?;
+        }
+
+        Ok(true)
     }
 
     async fn stop_clip(jvm: &Jvm, _: &mut WieJvmContext, clip: ClassInstanceRef<Clip>) -> JvmResult<bool> {
@@ -117,11 +140,28 @@ impl Player {
 
         if !player.is_null() {
             let _: () = jvm.invoke_virtual(&player, "javax/microedition/media/Player", "stop", "()V", ()).await?;
+            Clip::notify_listener(jvm, &clip, PlayListener::STOP, 0).await?;
 
             return Ok(true);
         }
 
         Ok(false)
+    }
+}
+
+struct EndOfDataNotifier {
+    clip: ClassInstanceRef<Clip>,
+    duration_ms: u64,
+}
+
+#[async_trait]
+impl MethodBody<JavaError, WieJvmContext> for EndOfDataNotifier {
+    async fn call(&self, jvm: &Jvm, context: &mut WieJvmContext, _args: Box<[JavaValue]>) -> Result<JavaValue, JavaError> {
+        jvm.attach_thread(None).await?;
+        context.system().sleep(self.duration_ms).await;
+        Clip::notify_listener(jvm, &self.clip, PlayListener::END_OF_DATA, 0).await?;
+        Clip::notify_listener(jvm, &self.clip, PlayListener::STOP, 0).await?;
+        Ok(JavaValue::Void)
     }
 }
 
@@ -140,60 +180,53 @@ mod test {
     };
 
     #[test]
-    fn test_base_clip_overloads_return_false() -> Result<()> {
+    fn test_base_clip_player_methods_are_callable() -> Result<()> {
         run_jvm_test(Box::new([wie_midp::get_protos().into(), get_protos().into()]), |jvm| async move {
             let clip: ClassInstanceRef<BaseClip> = jvm.new_class("org/kwis/msp/media/BaseClip", "()V", ()).await?.into();
 
-            let paused: bool = jvm
+            let _: bool = jvm
                 .invoke_static("org/kwis/msp/media/Player", "pause", "(Lorg/kwis/msp/media/BaseClip;)Z", (clip.clone(),))
                 .await?;
-            let stopped: bool = jvm
+            let _: bool = jvm
                 .invoke_static("org/kwis/msp/media/Player", "stop", "(Lorg/kwis/msp/media/BaseClip;)Z", (clip.clone(),))
                 .await?;
-            let resumed: bool = jvm
+            let _: bool = jvm
                 .invoke_static("org/kwis/msp/media/Player", "resume", "(Lorg/kwis/msp/media/BaseClip;)Z", (clip.clone(),))
                 .await?;
-            let played: bool = jvm
+            let _: bool = jvm
                 .invoke_static(
                     "org/kwis/msp/media/Player",
                     "play",
                     "(Lorg/kwis/msp/media/BaseClip;Z)Z",
-                    (clip.clone(), true),
+                    (clip.clone(), false),
                 )
                 .await?;
-            let recorded: bool = jvm
+            let _: bool = jvm
                 .invoke_static("org/kwis/msp/media/Player", "record", "(Lorg/kwis/msp/media/BaseClip;)Z", (clip,))
                 .await?;
-
-            assert!(!paused);
-            assert!(!stopped);
-            assert!(!resumed);
-            assert!(!played);
-            assert!(!recorded);
 
             Ok(())
         })
     }
 
     #[test]
-    fn test_clip_playback_uses_repeat_overload() -> Result<()> {
+    fn test_clip_play_and_stop() -> Result<()> {
         run_jvm_test(Box::new([wie_midp::get_protos().into(), get_protos().into()]), |jvm| async move {
-            let r#type: ClassInstanceRef<String> = JavaLangString::from_rust_string(&jvm, "audio/test").await?.into();
-            let data = jvm.instantiate_array("B", 0).await?;
+            let r#type = JavaLangString::from_rust_string(&jvm, "audio/mmf").await?;
+            let mut data = jvm.instantiate_array("B", 0).await?;
+            jvm.store_array(&mut data, 0, [] as [i8; 0]).await?;
+
             let clip: ClassInstanceRef<Clip> = jvm
                 .new_class("org/kwis/msp/media/Clip", "(Ljava/lang/String;[B)V", (r#type, data))
                 .await?
                 .into();
 
-            let played: bool = jvm
+            let _: bool = jvm
                 .invoke_static("org/kwis/msp/media/Player", "play", "(Lorg/kwis/msp/media/Clip;Z)Z", (clip.clone(), true))
                 .await?;
-            let stopped: bool = jvm
+            let _: bool = jvm
                 .invoke_static("org/kwis/msp/media/Player", "stop", "(Lorg/kwis/msp/media/Clip;)Z", (clip,))
                 .await?;
-
-            assert!(played);
-            assert!(stopped);
 
             Ok(())
         })

@@ -52,6 +52,7 @@ impl Clip {
                 JavaFieldProto::new("stopTime", "I", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("type", "Ljava/lang/String;", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("volume", "I", FieldAccessFlags::PRIVATE),
+                JavaFieldProto::new("listener", "Lorg/kwis/msp/media/PlayListener;", FieldAccessFlags::PRIVATE),
             ],
             access_flags: ClassAccessFlags::PUBLIC,
         }
@@ -167,8 +168,41 @@ impl Clip {
         Ok(())
     }
 
-    async fn set_listener(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, listener: ClassInstanceRef<PlayListener>) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.media.Clip::setListener({this:?}, {listener:?})");
+    async fn set_listener(
+        jvm: &Jvm,
+        _: &mut WieJvmContext,
+        mut this: ClassInstanceRef<Self>,
+        listener: ClassInstanceRef<PlayListener>,
+    ) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.media.Clip::setListener({this:?}, {listener:?})");
+
+        jvm.put_field(&mut this, "listener", "Lorg/kwis/msp/media/PlayListener;", listener)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn listener(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<PlayListener>> {
+        jvm.get_field(this, "listener", "Lorg/kwis/msp/media/PlayListener;").await
+    }
+
+    pub async fn notify_listener(jvm: &Jvm, this: &ClassInstanceRef<Self>, event: i32, parm: i32) -> JvmResult<()> {
+        let listener = Self::listener(jvm, this).await?;
+        if listener.is_null() {
+            return Ok(());
+        }
+
+        tracing::debug!("org.kwis.msp.media.Clip::notifyListener({this:?}, {event}, {parm})");
+
+        let _: () = jvm
+            .invoke_virtual(
+                &listener,
+                "org/kwis/msp/media/PlayListener",
+                "playUpdate",
+                "(Lorg/kwis/msp/media/Clip;II)V",
+                (this.clone(), event, parm),
+            )
+            .await?;
 
         Ok(())
     }
