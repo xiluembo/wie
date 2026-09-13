@@ -439,12 +439,16 @@ impl Display {
     async fn get_game_action(_jvm: &Jvm, _: &mut WieJvmContext, key: i32) -> JvmResult<i32> {
         tracing::debug!("org.kwis.msp.lcdui.Display::getGameAction({key})");
 
+        // EventQueue.SOFT1/SOFT2/SOFT3 = 90/91/92. Without these, soft-key
+        // tutorials that call getGameAction never match and cannot advance.
         let action = match WIPIKeyCode::from_raw(key) {
             Some(WIPIKeyCode::UP) => 1,
             Some(WIPIKeyCode::DOWN) => 6,
             Some(WIPIKeyCode::LEFT) => 2,
             Some(WIPIKeyCode::RIGHT) => 5,
             Some(WIPIKeyCode::FIRE) => 8,
+            Some(WIPIKeyCode::LEFT_SOFT_KEY) => 90,
+            Some(WIPIKeyCode::RIGHT_SOFT_KEY) => 91,
             Some(WIPIKeyCode::CLEAR) => 99,
             _ => key,
         };
