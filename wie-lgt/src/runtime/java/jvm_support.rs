@@ -16,7 +16,7 @@ use wie_backend::System;
 use wie_core_arm::ArmCore;
 use wie_jvm_support::{JvmImplementation, JvmSupport, native::NativeJavaValueCodec};
 use wie_midp::get_protos as get_midp_protos;
-use wie_util::{Result, WieError};
+use wie_util::{Result, WieError, read_generic};
 use wie_wipi_java::get_protos as get_wipi_java_protos;
 
 use super::classes::net::wie::{CletWrapper, CletWrapperCard, CletWrapperContext, LgtClassLoader};
@@ -39,6 +39,29 @@ type LgtJvmWord = u32;
 pub struct LgtJvmSupport;
 
 impl LgtJvmSupport {
+    /// Ensure `ptr` is a readable Java object with a non-null dispatch table.
+    /// `InvalidMemoryAccess(0)` usually means a null vtable word, not always a null `ptr`.
+    pub fn validate_object_ptr(core: &ArmCore, ptr: u32, context: &str) -> Result<()> {
+        if ptr == 0 {
+            return Err(WieError::FatalError(format!("null object pointer ({context})")));
+        }
+        let raw: wipi_types::lgt::java::LgtJavaClassInstance = read_generic(core, ptr).map_err(|error| {
+            WieError::FatalError(format!("unreadable object {ptr:#x} ({context}): {error}"))
+        })?;
+        if raw.ptr_dispatch_table == 0 {
+            return Err(WieError::FatalError(format!(
+                "object {ptr:#x} has null dispatch table ({context})"
+            )));
+        }
+        let _class_ptr: u32 = read_generic(core, raw.ptr_dispatch_table).map_err(|error| {
+            WieError::FatalError(format!(
+                "object {ptr:#x} dispatch {:#x} unreadable ({context}): {error}",
+                raw.ptr_dispatch_table
+            ))
+        })?;
+        Ok(())
+    }
+
     pub async fn init(core: &mut ArmCore, system: &System, jar_name: Option<&str>) -> Result<Jvm> {
         let protos = [get_midp_protos().into(), get_wipi_java_protos().into()];
         let implementation = LgtJvmImplementation::new(core)?;
@@ -72,6 +95,9 @@ impl LgtJvmSupport {
     }
 
     pub fn class_instance_from_raw(core: &ArmCore, ptr_instance: u32) -> Box<dyn ClassInstance> {
+        if let Err(error) = Self::validate_object_ptr(core, ptr_instance, "class_instance_from_raw") {
+            panic!("{error}");
+        }
         JavaValueCodec::new(core).object_from_raw(ptr_instance)
     }
 
@@ -170,18 +196,20 @@ impl LgtJvmSupport {
             .map_err(|_| WieError::FatalError(format!("Virtual method index does not fit LGT ABI for {class_name}.{name}{descriptor}")))
     }
 
-    pub async fn interface_dispatch_table(jvm: &mut Jvm, class_name: &str) -> Result<u32> {
-        let class = jvm
-            .resolve_class(class_name)
+    pub async fn interface_dispatch_table(core: &ArmCore, jvm: &mut Jvm, ptr_instance: u32, interface_name: &str) -> Result<u32> {
+        let _interface = jvm
+            .resolve_class(interface_name)
             .await
             .map_err(|JavaError::JavaException(instance)| WieError::JavaException(Self::class_instance_raw(&*instance)))?;
-        let definition = class
-            .definition
-            .as_any()
-            .downcast_ref::<JavaClassDefinition>()
-            .ok_or_else(|| WieError::FatalError(format!("Unsupported interface class implementation: {class_name}")))?;
+        if ptr_instance == 0 {
+            return Err(WieError::FatalError(format!(
+                "Null receiver for interface dispatch table: {interface_name}"
+            )));
+        }
 
-        definition.ptr_vtable()
+        let instance = JavaClassInstance::from_raw(ptr_instance, core);
+        let raw: wipi_types::lgt::java::LgtJavaClassInstance = read_generic(core, instance.ptr_raw)?;
+        Ok(raw.ptr_dispatch_table)
     }
 
     pub fn non_virtual_method_target(jvm: &Jvm, class_name: &str, name: &str, descriptor: &str) -> Result<u32> {
@@ -485,8 +513,28 @@ mod tests {
             assert_eq!(string_methods[10].method.as_ref().unwrap().name(), "length");
             assert_eq!(string_methods[11].method.as_ref().unwrap().name(), "charAt");
             assert_eq!(string_methods[14].method.as_ref().unwrap().name(), "getBytes");
-            assert_eq!(string_methods[28].method.as_ref().unwrap().name(), "substring");
-            for index in [10usize, 11, 14, 28] {
+            assert_eq!(
+                (
+                    string_methods[26].method.as_ref().unwrap().name().as_str(),
+                    string_methods[26].method.as_ref().unwrap().descriptor().as_str()
+                ),
+                ("indexOf", "(Ljava/lang/String;I)I")
+            );
+            assert_eq!(
+                (
+                    string_methods[27].method.as_ref().unwrap().name().as_str(),
+                    string_methods[27].method.as_ref().unwrap().descriptor().as_str()
+                ),
+                ("substring", "(I)Ljava/lang/String;")
+            );
+            assert_eq!(
+                (
+                    string_methods[28].method.as_ref().unwrap().name().as_str(),
+                    string_methods[28].method.as_ref().unwrap().descriptor().as_str()
+                ),
+                ("substring", "(II)Ljava/lang/String;")
+            );
+            for index in [10usize, 11, 14, 26, 27, 28] {
                 let target: u32 = read_generic(&core, string_definition.ptr_vtable()? + ((index + 1) * 4) as u32)?;
                 assert_eq!(target, string_methods[index].method.as_ref().unwrap().target()?);
             }

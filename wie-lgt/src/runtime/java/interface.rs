@@ -102,7 +102,14 @@ async fn handle_java_system_svc(core: &mut ArmCore, (jvm, ptr_jar_path): &mut (J
             JavaSystemSvcId::IsClassAssignable => java_is_class_assignable(core, jvm, core.read_param(0)?, core.read_param(1)?, core.read_param(2)?)
                 .await?
                 .write(core, lr),
-            JavaSystemSvcId::ThrowException => Err(WieError::JavaException(core.read_param(0)?)),
+            JavaSystemSvcId::ThrowException => {
+                let ptr_exception = core.read_param(0)?;
+                if ptr_exception == 0 {
+                    EmulatedFunction::call(&java_raise_null_pointer_exception, core, jvm).await?.write(core, lr)
+                } else {
+                    Err(WieError::JavaException(ptr_exception))
+                }
+            }
             JavaSystemSvcId::RaiseNullPointerException => EmulatedFunction::call(&java_raise_null_pointer_exception, core, jvm)
                 .await?
                 .write(core, lr),
@@ -151,6 +158,13 @@ async fn java_unk55(_core: &mut ArmCore, _: &mut ()) -> Result<()> {
 }
 
 async fn java_monitor_enter(core: &mut ArmCore, jvm: &mut Jvm, ptr_instance: u32) -> Result<u32> {
+    if ptr_instance == 0 {
+        return java_raise_null_pointer_exception(core, jvm).await.map(|_| 0);
+    }
+    if let Err(error) = LgtJvmSupport::validate_object_ptr(core, ptr_instance, "MonitorEnter") {
+        tracing::error!("{error}");
+        return java_raise_null_pointer_exception(core, jvm).await.map(|_| 0);
+    }
     let instance = LgtJvmSupport::class_instance_from_raw(core, ptr_instance);
     jvm.monitor_enter(&*instance)
         .await
@@ -159,6 +173,13 @@ async fn java_monitor_enter(core: &mut ArmCore, jvm: &mut Jvm, ptr_instance: u32
 }
 
 async fn java_monitor_exit(core: &mut ArmCore, jvm: &mut Jvm, ptr_instance: u32) -> Result<u32> {
+    if ptr_instance == 0 {
+        return java_raise_null_pointer_exception(core, jvm).await.map(|_| 0);
+    }
+    if let Err(error) = LgtJvmSupport::validate_object_ptr(core, ptr_instance, "MonitorExit") {
+        tracing::error!("{error}");
+        return java_raise_null_pointer_exception(core, jvm).await.map(|_| 0);
+    }
     let instance = LgtJvmSupport::class_instance_from_raw(core, ptr_instance);
     jvm.monitor_exit(&*instance)
         .await
@@ -196,10 +217,12 @@ async fn java_string_literal(core: &mut ArmCore, jvm: &mut Jvm, _runtime_context
     Ok(value)
 }
 
-async fn java_get_interface_dispatch_table(core: &mut ArmCore, jvm: &mut Jvm, _ptr_instance: u32, ptr_interface_name: u32) -> Result<u32> {
+async fn java_get_interface_dispatch_table(core: &mut ArmCore, jvm: &mut Jvm, ptr_instance: u32, ptr_interface_name: u32) -> Result<u32> {
     let interface_name = String::from_utf8(read_null_terminated_string_bytes(core, ptr_interface_name)?)
         .map_err(|error| WieError::FatalError(format!("Invalid LGT interface class name: {error}")))?;
-    LgtJvmSupport::interface_dispatch_table(jvm, &interface_name).await
+    // LGT invokeinterface indexes into the receiver's class vtable (same slots as the
+    // interface ABI). Returning the interface's own table would call abstract stubs.
+    LgtJvmSupport::interface_dispatch_table(core, jvm, ptr_instance, &interface_name).await
 }
 
 async fn java_push_exception_frame(core: &mut ArmCore, _: &mut ()) -> Result<()> {
@@ -246,6 +269,9 @@ async fn java_store_reference_array_unchecked(core: &mut ArmCore, _: &mut (), pt
 }
 
 async fn java_store_reference_array(core: &mut ArmCore, jvm: &mut Jvm, ptr_array: u32, index: u32, ptr_value: u32) -> Result<()> {
+    if ptr_array == 0 {
+        return java_raise_null_pointer_exception(core, jvm).await;
+    }
     let mut array = LgtJvmSupport::class_instance_from_raw(core, ptr_array);
     let value = (ptr_value != 0).then(|| LgtJvmSupport::class_instance_from_raw(core, ptr_value));
     if let Some(value) = &value
@@ -628,6 +654,11 @@ async fn java_link_imported_classes(
             let member_index = link.non_virtual_method_offset + local_index;
             let (name, descriptor) = read_member_name_and_descriptor(core, non_virtual_method_imports, member_index)?;
             tracing::debug!("Imported direct method {class_name}.{name}{descriptor}");
+        }
+        for local_index in 0..link.virtual_method_count {
+            let member_index = link.virtual_method_offset + local_index;
+            let (name, descriptor) = read_member_name_and_descriptor(core, virtual_method_imports, member_index)?;
+            tracing::info!("Imported virtual method {class_name}.{name}{descriptor}");
         }
         jvm.resolve_class(&class_name)
             .await

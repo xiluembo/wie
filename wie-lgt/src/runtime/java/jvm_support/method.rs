@@ -161,6 +161,7 @@ impl Method for JavaMethod {
             }
         }) {
             Ok(value) => Ok(value),
+            Err(WieError::JavaException(0)) => Err(jvm.exception("java/lang/NullPointerException", "null exception").await),
             Err(WieError::JavaException(ptr_raw)) => Err(JavaError::JavaException(JavaValueCodec::new(&self.core).object_from_raw(ptr_raw))),
             Err(error) => {
                 let message = format!("{error}{}", self.core.dump_reg_stack(0x1000));
@@ -203,6 +204,23 @@ where
         let raw_args = (0..parameter_word_count)
             .map(|index| <u32 as EmulatedFunctionParam<u32>>::get(core, index))
             .collect::<Vec<_>>();
+
+        let method_label = format!("{}{}", self.proto.name, self.proto.descriptor);
+        let mut words = raw_args.iter().copied();
+        for parameter_type in &self.parameter_types {
+            let low = words.next().unwrap_or(0);
+            if matches!(parameter_type, JavaType::Long | JavaType::Double) {
+                let _high = words.next();
+                continue;
+            }
+            if matches!(parameter_type, JavaType::Class(_) | JavaType::Array(_)) && low != 0 {
+                crate::runtime::java::jvm_support::LgtJvmSupport::validate_object_ptr(
+                    core,
+                    low,
+                    &format!("entering {method_label}"),
+                )?;
+            }
+        }
 
         let codec = JavaValueCodec::new(core);
         let args = decode_method_arguments(&codec, &self.parameter_types, &raw_args);
