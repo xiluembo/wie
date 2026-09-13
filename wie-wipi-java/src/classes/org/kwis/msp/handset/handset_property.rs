@@ -37,12 +37,22 @@ impl HandsetProperty {
 
     async fn get_system_property(jvm: &Jvm, _: &mut WieJvmContext, name: ClassInstanceRef<String>) -> JvmResult<ClassInstanceRef<String>> {
         let name = JavaLangString::to_rust_string(jvm, &name).await?;
-        tracing::warn!("stub org.kwis.msp.handset.HandsetProperty::getSystemProperty({name})");
 
+        // Plausible LGT feature-phone values so games that branch on model keep running.
         let value = match name.as_ref() {
             "VIBRATORLEVEL" => "0",
-            _ => "",
+            "PHONEMODEL" => "LG-SV360",
+            "PHONENUMBER" => "01000000000",
+            "LCDWIDTH" => "240",
+            "LCDHEIGHT" => "320",
+            "COLORDEPTH" | "COLORBITS" => "16",
+            other => {
+                tracing::warn!("unknown HandsetProperty::getSystemProperty({other})");
+                ""
+            }
         };
+
+        tracing::debug!("org.kwis.msp.handset.HandsetProperty::getSystemProperty({name}) -> {value:?}");
 
         let result = JavaLangString::from_rust_string(jvm, value).await?;
         Ok(result.into())

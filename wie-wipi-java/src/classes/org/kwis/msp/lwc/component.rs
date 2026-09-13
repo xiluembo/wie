@@ -69,8 +69,9 @@ impl Component {
     }
 
     async fn get_height(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
-        tracing::warn!("stub org.kwis.msp.lwc.Component::getHeight({this:?})");
+        // Annunciator / status bar height on typical WIPI handsets.
+        tracing::debug!("org.kwis.msp.lwc.Component::getHeight({this:?}) -> 20");
 
-        Ok(0)
+        Ok(20)
     }
 }
