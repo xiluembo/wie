@@ -11,6 +11,7 @@ vtable = [
     { name = "toString", descriptor = "()Ljava/lang/String;", index = 4 },
 ]
 
+# LGT AOT uses Class.getResourceAsStream at fixed vtable index 16.
 [[class]]
 name = "java/lang/Class"
 vtable = [
@@ -30,31 +31,30 @@ vtable = [
     { name = "available", descriptor = "()I", index = 14 },
     { name = "close", descriptor = "()V", index = 15 },
 ]
-
 [[class]]
 name = "java/io/Reader"
 vtable = [
     { name = "read", descriptor = "([C)I", index = 11 },
     { name = "close", descriptor = "()V", index = 18 },
 ]
-
 [[class]]
 name = "java/io/DataInputStream"
 vtable = [
     { name = "readByte", descriptor = "()B", index = 23 },
 ]
-
 [[class]]
 name = "java/lang/String"
 vtable = [
     { name = "length", descriptor = "()I", index = 10 },
     { name = "charAt", descriptor = "(I)C", index = 11 },
     { name = "getBytes", descriptor = "()[B", index = 14 },
+    # LGT AOT: substring(0, indexOf(delim, 0)) uses idx 26 then 28.
+    { name = "indexOf", descriptor = "(Ljava/lang/String;I)I", index = 26 },
+    { name = "substring", descriptor = "(I)Ljava/lang/String;", index = 27 },
     { name = "substring", descriptor = "(II)Ljava/lang/String;", index = 28 },
     { name = "trim", descriptor = "()Ljava/lang/String;", index = 33 },
     { name = "toCharArray", descriptor = "()[C", index = 34 },
 ]
-
 [[class]]
 name = "java/lang/StringBuffer"
 vtable = [
@@ -76,7 +76,18 @@ vtable = [
     { name = "start", descriptor = "()V", index = 10 },
     { name = "setPriority", descriptor = "(I)V", index = 14 },
 ]
-
+# LGT AOT calls Runtime.freeMemory/totalMemory via fixed vtable slots.
+# Without ABI entries those methods are omitted and the app jumps to PC=0.
+# Order matches CLDC/phoneME Runtime after Object's 10 slots.
+[[class]]
+name = "java/lang/Runtime"
+vtable_size = 14
+vtable = [
+    { name = "exit", descriptor = "(I)V", index = 10 },
+    { name = "freeMemory", descriptor = "()J", index = 11 },
+    { name = "totalMemory", descriptor = "()J", index = 12 },
+    { name = "gc", descriptor = "()V", index = 13 },
+]
 [[class]]
 name = "java/util/Vector"
 vtable = [
@@ -97,7 +108,28 @@ name = "java/util/Random"
 vtable = [
     { name = "nextInt", descriptor = "()I", index = 12 },
 ]
-
+# LGT AOT loads packaged assets via File.sizeOf/read. Without ABI entries those
+# instance methods are omitted from the LGT vtable (same PC=0 failure mode as Runtime).
+# Order matches WIPI 1.1.1 File method detail after Object's 10 slots.
+[[class]]
+name = "org/kwis/msp/io/File"
+vtable_size = 24
+vtable = [
+    { name = "openInputStream", descriptor = "()Ljava/io/InputStream;", index = 10 },
+    { name = "openDataInputStream", descriptor = "()Ljava/io/DataInputStream;", index = 11 },
+    { name = "openOutputStream", descriptor = "()Ljava/io/OutputStream;", index = 12 },
+    { name = "openDataOutputStream", descriptor = "()Ljava/io/DataOutputStream;", index = 13 },
+    { name = "close", descriptor = "()V", index = 14 },
+    { name = "write", descriptor = "(I)I", index = 15 },
+    { name = "write", descriptor = "([B)I", index = 16 },
+    { name = "write", descriptor = "([BII)I", index = 17 },
+    { name = "read", descriptor = "([B)I", index = 18 },
+    { name = "read", descriptor = "([BII)I", index = 19 },
+    { name = "seek", descriptor = "(I)V", index = 20 },
+    { name = "sizeOf", descriptor = "()I", index = 21 },
+    { name = "read", descriptor = "()I", index = 22 },
+    { name = "tell", descriptor = "()I", index = 23 },
+]
 [[class]]
 name = "org/kwis/msp/lcdui/Jlet"
 vtable = [
