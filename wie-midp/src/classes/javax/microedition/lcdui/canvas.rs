@@ -126,9 +126,11 @@ impl Canvas {
                 (),
             )
             .await?;
+        // Route through Display::serviceRepaints (repaintPending + isPainting), not a
+        // forced handlePaintEvent — nesting paint from Card.serviceRepaints hung stage enter.
         if !display.is_null() {
             let _: () = jvm
-                .invoke_virtual(&display, "javax/microedition/lcdui/Display", "handlePaintEvent", "()V", ())
+                .invoke_virtual(&display, "javax/microedition/lcdui/Display", "serviceRepaints", "()V", ())
                 .await?;
         }
 

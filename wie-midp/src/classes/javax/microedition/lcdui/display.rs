@@ -123,6 +123,8 @@ impl Display {
                 JavaFieldProto::new("height", "I", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("paintDisabled", "Z", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("repaintPending", "Z", FieldAccessFlags::PRIVATE),
+                // MIDP: Canvas.serviceRepaints() must no-op if called from paint().
+                JavaFieldProto::new("isPainting", "Z", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("alertGeneration", "I", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("tickerGeneration", "I", FieldAccessFlags::PRIVATE),
             ],
@@ -791,6 +793,11 @@ impl Display {
     async fn service_repaints(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Display::serviceRepaints({this:?})");
 
+        // JSR-118: if called from paint(), return immediately without doing anything.
+        if jvm.get_field::<bool>(&this, "isPainting", "Z").await? {
+            return Ok(());
+        }
+
         if jvm.get_field::<bool>(&this, "repaintPending", "Z").await? {
             let _: () = jvm
                 .invoke_virtual(&this, "javax/microedition/lcdui/Display", "handlePaintEvent", "()V", ())
@@ -802,8 +809,24 @@ impl Display {
     async fn handle_paint_event(jvm: &Jvm, context: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Display::handlePaintEvent({this:?})");
 
+        // Canvas.serviceRepaints jumps straight here; reject nested paints the same way.
+        // WIPI titles often call Card.serviceRepaints from paint(); re-entering hung the UI
+        // while host-side looping audio kept playing.
+        if jvm.get_field::<bool>(&this, "isPainting", "Z").await? {
+            return Ok(());
+        }
+
+        jvm.put_field(&mut this, "isPainting", "Z", true).await?;
+
         // Repaints requested during painting belong to the next cycle.
         jvm.put_field(&mut this, "repaintPending", "Z", false).await?;
+        let paint_result = Self::handle_paint_event_body(jvm, context, this.clone()).await;
+
+        jvm.put_field(&mut this, "isPainting", "Z", false).await?;
+        paint_result
+    }
+
+    async fn handle_paint_event_body(jvm: &Jvm, context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
         let current_displayable: ClassInstanceRef<Displayable> = jvm
             .get_field(&this, "currentDisplayable", "Ljavax/microedition/lcdui/Displayable;")
             .await?;
