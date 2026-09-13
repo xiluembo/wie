@@ -40,6 +40,36 @@ fn write_display_size(display_size: &RwLock<(u32, u32)>, width: u32, height: u32
     Ok(())
 }
 
+/// Rotate an ARGB8888 framebuffer by `quarters * 90°` clockwise.
+fn rotate_argb(src: &[u32], width: u32, height: u32, quarters: u8) -> (Vec<u32>, u32, u32) {
+    let quarters = quarters % 4;
+    if quarters == 0 {
+        return (src.to_vec(), width, height);
+    }
+
+    let (out_w, out_h) = if quarters % 2 == 0 {
+        (width, height)
+    } else {
+        (height, width)
+    };
+    let mut dst = vec![0u32; (out_w * out_h) as usize];
+
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = src[(y * width + x) as usize];
+            let (dx, dy) = match quarters {
+                1 => (height - 1 - y, x),           // 90° CW
+                2 => (width - 1 - x, height - 1 - y), // 180°
+                3 => (y, width - 1 - x),            // 270° CW
+                _ => (x, y),
+            };
+            dst[(dy * out_w + dx) as usize] = pixel;
+        }
+    }
+
+    (dst, out_w, out_h)
+}
+
 #[derive(Debug)]
 pub enum WindowInternalEvent {
     Resize(u32, u32),
@@ -141,14 +171,15 @@ impl WindowImpl {
     {
         self.event_loop.set_control_flow(ControlFlow::Poll);
 
-        const DEFAULT_USER_SCALE_FACTOR: f64 = 1.0;
+        // Integer 2x by default — most WIPI titles are 240x320 pixel art.
+        const DEFAULT_USER_SCALE_FACTOR: f64 = 2.0;
         let (width, height) = read_display_size(&self.display_size);
         let orig_size = LogicalSize::new(width, height);
         let mut handler = ApplicationHandlerImpl {
             native_scale_factor: 1.0,
             user_scale_factor: DEFAULT_USER_SCALE_FACTOR,
             content_size: orig_size,
-            scaled_size: orig_size.to_physical(1.0),
+            scaled_size: orig_size.to_physical(DEFAULT_USER_SCALE_FACTOR),
             window_size: Default::default(),
             scaler: Scaler::Native,
             scaled_image_buf: Default::default(),
@@ -157,6 +188,7 @@ impl WindowImpl {
             surface: None,
             callback: Box::new(callback),
             last_frame: vec![0u32; (width * height) as usize],
+            rotation_quarters: 0,
         };
 
         Ok(self.event_loop.run_app(&mut handler)?)
@@ -221,10 +253,8 @@ impl Scaler {
                         &srcimg,
                         &mut dstimg,
                         Some(&ResizeOptions {
-                            #[cfg(debug_assertions)]
+                            // Always nearest-neighbor: preserve feature-phone pixels.
                             algorithm: ResizeAlg::Nearest,
-                            #[cfg(not(debug_assertions))]
-                            algorithm: ResizeAlg::Convolution(fast_image_resize::FilterType::Lanczos3),
                             cropping: SrcCropping::None,
                             mul_div_alpha: false,
                         }),
@@ -258,6 +288,8 @@ where
     window_size: PhysicalSize<u32>,
     /// Last content screen image data.
     last_frame: Vec<u32>,
+    /// Display rotation in 90° steps (0..=3). Host-side only.
+    rotation_quarters: u8,
 
     window: Option<Arc<WinitWindow>>,
     context: Option<Context<Arc<WinitWindow>>>,
@@ -297,8 +329,45 @@ where
         }
 
         self.scaler = Scaler::new(self.native_scale_factor + self.user_scale_factor);
-        self.scaled_size = self.scaler.to_physical(self.content_size);
+        let (disp_w, disp_h) = self.display_content_size();
+        self.scaled_size = self.scaler.to_physical(LogicalSize::new(disp_w, disp_h));
         self.scaled_image_buf = vec![0u32; self.scaled_size.width as usize * self.scaled_size.height as usize];
+    }
+
+    fn display_content_size(&self) -> (u32, u32) {
+        if self.rotation_quarters % 2 == 0 {
+            (self.content_size.width, self.content_size.height)
+        } else {
+            (self.content_size.height, self.content_size.width)
+        }
+    }
+
+    fn rotate_display(&mut self, delta: i8) {
+        self.rotation_quarters = ((self.rotation_quarters as i8 + delta).rem_euclid(4)) as u8;
+        tracing::info!("display rotation -> {}°", self.rotation_quarters as u32 * 90);
+        self.update_scale_factor(None, None);
+        if let Some(window) = &self.window {
+            window.set_title(&format!("WIE ({}°)", self.rotation_quarters as u32 * 90));
+            if let Some(new_size) = window.request_inner_size(self.scaled_size) {
+                self.window_size = new_size;
+            }
+            self.on_resize();
+        }
+        self.paint_last_frame();
+    }
+
+    fn bump_integer_scale(&mut self, delta: i32) {
+        let current = (self.native_scale_factor + self.user_scale_factor).round() as i32;
+        let next = (current + delta).clamp(1, 6);
+        let new_user = next as f64 - self.native_scale_factor;
+        self.update_scale_factor(None, Some(new_user));
+        if let Some(window) = &self.window {
+            if let Some(new_size) = window.request_inner_size(self.scaled_size) {
+                self.window_size = new_size;
+            }
+            self.on_resize();
+        }
+        self.paint_last_frame();
     }
 
     fn resize_content(&mut self, width: u32, height: u32) {
@@ -355,30 +424,37 @@ where
 
     /// Displays the last content frame to the window.
     fn paint_last_frame(&mut self) -> Option<()> {
-        let data = &self.last_frame;
-        let data_to_blit = if self.scaled_image_buf.len() == data.len() {
-            data
+        let (rotated, rot_w, rot_h) = rotate_argb(
+            &self.last_frame,
+            self.content_size.width,
+            self.content_size.height,
+            self.rotation_quarters,
+        );
+        let rot_size = LogicalSize::new(rot_w, rot_h);
+        let data_to_blit = if self.scaled_image_buf.len() == rotated.len() && self.scaler.scale() == 1.0 {
+            &rotated
         } else {
             self.scaler
-                .scale_image(&mut self.scaled_image_buf, data, self.scaled_size, self.content_size);
+                .scale_image(&mut self.scaled_image_buf, &rotated, self.scaled_size, rot_size);
             &self.scaled_image_buf
         };
 
-        let mut win_buf = self.surface.as_mut().unwrap().buffer_mut().unwrap();
+        let mut win_buf = self.surface.as_mut()?.buffer_mut().ok()?;
         if win_buf.len() == data_to_blit.len() {
             win_buf.copy_from_slice(data_to_blit);
         } else {
             tracing::warn!(
-                "buffer size mismatch, skipping paint: {}, {} (content {:?}, scaled {:?}, win {:?})",
+                "buffer size mismatch, skipping paint: {}, {} (content {:?}, scaled {:?}, win {:?}, rot {})",
                 win_buf.len(),
                 data_to_blit.len(),
                 self.content_size,
                 self.scaled_size,
-                self.window_size
+                self.window_size,
+                self.rotation_quarters
             );
             return None;
         }
-        win_buf.present().unwrap();
+        win_buf.present().ok()?;
         Some(())
     }
 }
@@ -394,7 +470,10 @@ where
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         // Initialize the window.
         let window_attributes = WinitWindow::default_attributes()
-            .with_inner_size(self.content_size.to_physical::<u32>(1.0))
+            .with_inner_size(LogicalSize::new(
+                self.content_size.width * 2,
+                self.content_size.height * 2,
+            ))
             .with_title("WIE");
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
         let context = Context::new(window.clone()).unwrap();
@@ -403,7 +482,7 @@ where
         self.window_size = window.inner_size();
 
         // After the window is initialized we resize the window again with the correct scale factor.
-        self.update_scale_factor(Some(window.scale_factor()), Some(1.0));
+        self.update_scale_factor(Some(window.scale_factor()), Some(2.0));
         if let Some(new_size) = window.request_inner_size(self.scaled_size) {
             self.window_size = new_size;
         }
@@ -452,6 +531,26 @@ where
                 ..
             } => match state {
                 ElementState::Pressed => {
+                    use winit::keyboard::KeyCode as WinitKeyCode;
+                    match physical_key {
+                        PhysicalKey::Code(WinitKeyCode::BracketRight) => {
+                            self.rotate_display(1);
+                            return;
+                        }
+                        PhysicalKey::Code(WinitKeyCode::BracketLeft) => {
+                            self.rotate_display(-1);
+                            return;
+                        }
+                        PhysicalKey::Code(WinitKeyCode::Equal) | PhysicalKey::Code(WinitKeyCode::NumpadAdd) => {
+                            self.bump_integer_scale(1);
+                            return;
+                        }
+                        PhysicalKey::Code(WinitKeyCode::Minus) | PhysicalKey::Code(WinitKeyCode::NumpadSubtract) => {
+                            self.bump_integer_scale(-1);
+                            return;
+                        }
+                        _ => {}
+                    }
                     self.callback(WindowCallbackEvent::Keydown(physical_key), event_loop);
                 }
                 ElementState::Released => {
@@ -465,9 +564,9 @@ where
                 tracing::debug!("WindowResized {new_size:?}");
                 self.window_size = new_size;
                 if self.window_size != self.scaled_size {
-                    // Determine the new scale factor.
-                    let wscale = self.window_size.width as f64 / self.content_size.width as f64;
-                    let hscale = self.window_size.height as f64 / self.content_size.height as f64;
+                    let (disp_w, disp_h) = self.display_content_size();
+                    let wscale = self.window_size.width as f64 / disp_w as f64;
+                    let hscale = self.window_size.height as f64 / disp_h as f64;
                     let new_scale = wscale.min(hscale);
                     let new_user_scale = new_scale - self.native_scale_factor;
                     self.update_scale_factor(None, Some(new_user_scale));
@@ -490,7 +589,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::is_valid_display_size;
+    use super::{is_valid_display_size, rotate_argb};
 
     #[test]
     fn validates_display_size_bounds() {
@@ -502,5 +601,14 @@ mod tests {
         assert!(!is_valid_display_size(4097, 1));
         assert!(!is_valid_display_size(4096, 1025));
         assert!(!is_valid_display_size(u32::MAX, 2));
+    }
+
+    #[test]
+    fn rotates_argb_90_degrees() {
+        // 2x1: [A, B]
+        let src = vec![0xAA, 0xBB];
+        let (dst, w, h) = rotate_argb(&src, 2, 1, 1);
+        assert_eq!((w, h), (1, 2));
+        assert_eq!(dst, vec![0xAA, 0xBB]); // (0,0)->(0,0), (1,0)->(0,1) for 90 CW of 2x1
     }
 }
