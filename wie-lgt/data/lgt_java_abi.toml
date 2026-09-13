@@ -93,10 +93,55 @@ vtable = [
     { name = "read", descriptor = "([C)I", index = 11 },
     { name = "close", descriptor = "()V", index = 18 },
 ]
+# LGT DataInput layout (empirical, not CLDC):
+# - readByte@23 (CLDC places readByte at 20; that layout desyncs binary reads)
+# - load path uses idx 28 with no args as readInt; also idx 22 and 32
+# - typed reads packed after readBoolean@22 through readUTF@32
 [[class]]
 name = "java/io/DataInputStream"
+vtable_size = 33
 vtable = [
+    { name = "readBoolean", descriptor = "()Z", index = 22 },
     { name = "readByte", descriptor = "()B", index = 23 },
+    { name = "readUnsignedByte", descriptor = "()I", index = 24 },
+    { name = "readShort", descriptor = "()S", index = 25 },
+    { name = "readUnsignedShort", descriptor = "()I", index = 26 },
+    { name = "readChar", descriptor = "()C", index = 27 },
+    { name = "readInt", descriptor = "()I", index = 28 },
+    { name = "readLong", descriptor = "()J", index = 29 },
+    { name = "readFloat", descriptor = "()F", index = 30 },
+    { name = "readDouble", descriptor = "()D", index = 31 },
+    { name = "readUTF", descriptor = "()Ljava/lang/String;", index = 32 },
+]
+
+[[class]]
+name = "java/io/DataInput"
+vtable = [
+    { name = "readBoolean", descriptor = "()Z", index = 22 },
+    { name = "readByte", descriptor = "()B", index = 23 },
+    { name = "readUnsignedByte", descriptor = "()I", index = 24 },
+    { name = "readShort", descriptor = "()S", index = 25 },
+    { name = "readUnsignedShort", descriptor = "()I", index = 26 },
+    { name = "readChar", descriptor = "()C", index = 27 },
+    { name = "readInt", descriptor = "()I", index = 28 },
+    { name = "readLong", descriptor = "()J", index = 29 },
+    { name = "readFloat", descriptor = "()F", index = 30 },
+    { name = "readDouble", descriptor = "()D", index = 31 },
+    { name = "readUTF", descriptor = "()Ljava/lang/String;", index = 32 },
+]
+
+# LGT AOT: GregorianCalendar vtable +0x50 = idx 19 with field arg 11
+# (Calendar.HOUR_OF_DAY) → Calendar.get(I)I.
+[[class]]
+name = "java/util/Calendar"
+vtable = [
+    { name = "get", descriptor = "(I)I", index = 19 },
+]
+
+[[class]]
+name = "java/util/GregorianCalendar"
+vtable = [
+    { name = "get", descriptor = "(I)I", index = 19 },
 ]
 [[class]]
 name = "java/lang/String"
