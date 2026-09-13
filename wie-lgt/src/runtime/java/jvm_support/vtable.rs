@@ -19,6 +19,12 @@ pub struct JavaVtableEntry {
 
 pub struct JavaVtable;
 
+/// LGT AOT indexes fixed slots (e.g. +0x50 = index 19) without bounds checks.
+/// Classes without a full LGT ABI only inherit Object (~10 slots); reading past the
+/// allocated vtable pulls adjacent heap words (often class-name ASCII) and jumps there.
+/// Pad so missing slots become SVC stubs → `Unimplemented: <class> vtable index N`.
+const MIN_LGT_VTABLE_ENTRIES: usize = 48;
+
 impl JavaVtable {
     pub fn allocate(core: &mut ArmCore, entry_count: usize) -> Result<u32> {
         Allocator::alloc(core, ((entry_count + 1) * size_of::<u32>()) as u32)
@@ -128,7 +134,12 @@ impl JavaVtable {
                     .clone()
             });
         }
-        let minimum_size = abi_classes.iter().filter_map(|class| class.vtable_size).max().unwrap_or(0);
+        let minimum_size = abi_classes
+            .iter()
+            .filter_map(|class| class.vtable_size)
+            .max()
+            .unwrap_or(0)
+            .max(MIN_LGT_VTABLE_ENTRIES);
         if methods.len() < minimum_size {
             methods.resize(minimum_size, JavaVtableEntry { target: 0, method: None });
         }
@@ -180,7 +191,17 @@ impl JavaVtable {
             };
         }
 
+        if methods.len() < MIN_LGT_VTABLE_ENTRIES {
+            methods.resize(MIN_LGT_VTABLE_ENTRIES, JavaVtableEntry { target: 0, method: None });
+        }
+
         Ok(methods)
+    }
+
+    pub fn pad_entries(entries: &mut Vec<JavaVtableEntry>) {
+        if entries.len() < MIN_LGT_VTABLE_ENTRIES {
+            entries.resize(MIN_LGT_VTABLE_ENTRIES, JavaVtableEntry { target: 0, method: None });
+        }
     }
 }
 

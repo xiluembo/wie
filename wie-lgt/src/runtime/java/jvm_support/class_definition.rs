@@ -516,7 +516,7 @@ impl JavaClassDefinition {
             descriptor.flags &= !LGT_JAVA_CLASS_SUPER_CLASS_IS_NAME;
         }
         let mut declared_methods = self.methods()?;
-        let virtual_methods = if descriptor.ptr_vtable != 0 {
+        let mut virtual_methods = if descriptor.ptr_vtable != 0 {
             let parent_methods = if let Some(parent_class) = &parent_class {
                 parent_class.vtable_entries(jvm).await?
             } else {
@@ -607,6 +607,7 @@ impl JavaClassDefinition {
         } else {
             JavaVtable::build_methods(jvm, &class_name, parent_class.as_ref(), &declared_methods).await?
         };
+        JavaVtable::pad_entries(&mut virtual_methods);
 
         let static_field_word_count = descriptor.static_field_word_count as usize;
         let class_fields_size = size_of::<RawJavaClassFieldStorage>() + static_field_word_count * size_of::<LgtJvmWord>();
