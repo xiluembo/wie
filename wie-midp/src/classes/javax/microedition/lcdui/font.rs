@@ -96,6 +96,7 @@ impl Font {
                     "I",
                     FieldAccessFlags::PUBLIC | FieldAccessFlags::STATIC | FieldAccessFlags::FINAL,
                 ),
+                JavaFieldProto::new("defaultFont", "Ljavax/microedition/lcdui/Font;", FieldAccessFlags::STATIC),
             ],
             access_flags: ClassAccessFlags::PUBLIC | ClassAccessFlags::FINAL,
         }
@@ -120,35 +121,48 @@ impl Font {
     }
 
     async fn init(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Font>) -> JvmResult<()> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::<init>({this:?})");
+        tracing::debug!("javax.microedition.lcdui.Font::<init>({this:?})");
 
         Ok(())
     }
 
     async fn get_height(_: &Jvm, _: &mut WieJvmContext) -> JvmResult<i32> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::getHeight");
+        tracing::debug!("javax.microedition.lcdui.Font::getHeight");
 
         Ok(Self::HEIGHT) // TODO: hardcoded
     }
 
     async fn get_default_font(jvm: &Jvm, _: &mut WieJvmContext) -> JvmResult<ClassInstanceRef<Self>> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::getDefaultFont");
+        tracing::debug!("javax.microedition.lcdui.Font::getDefaultFont");
 
-        let instance = jvm.new_class("javax/microedition/lcdui/Font", "()V", []).await?;
+        let cached: ClassInstanceRef<Font> = jvm
+            .get_static_field("javax/microedition/lcdui/Font", "defaultFont", "Ljavax/microedition/lcdui/Font;")
+            .await?;
+        if !cached.is_null() {
+            return Ok(cached);
+        }
 
-        Ok(instance.into())
+        let instance: ClassInstanceRef<Font> = jvm.new_class("javax/microedition/lcdui/Font", "()V", []).await?.into();
+        jvm.put_static_field(
+            "javax/microedition/lcdui/Font",
+            "defaultFont",
+            "Ljavax/microedition/lcdui/Font;",
+            instance.clone(),
+        )
+        .await?;
+
+        Ok(instance)
     }
 
-    async fn get_font(jvm: &Jvm, _: &mut WieJvmContext, face: i32, style: i32, size: i32) -> JvmResult<ClassInstanceRef<Font>> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::getFont({face:?}, {style:?}, {size:?})");
+    async fn get_font(jvm: &Jvm, context: &mut WieJvmContext, face: i32, style: i32, size: i32) -> JvmResult<ClassInstanceRef<Font>> {
+        tracing::debug!("javax.microedition.lcdui.Font::getFont({face:?}, {style:?}, {size:?})");
 
-        let instance = jvm.new_class("javax/microedition/lcdui/Font", "()V", []).await?;
-
-        Ok(instance.into())
+        // Face/style/size ignored for now — same metrics as default.
+        Self::get_default_font(jvm, context).await
     }
 
     async fn string_width(jvm: &Jvm, context: &mut WieJvmContext, _: ClassInstanceRef<Self>, string: ClassInstanceRef<String>) -> JvmResult<i32> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::stringWidth({string:?})");
+        tracing::debug!("javax.microedition.lcdui.Font::stringWidth({string:?})");
 
         let string = JavaLangString::to_rust_string(jvm, &string).await?;
 
@@ -163,7 +177,7 @@ impl Font {
         offset: i32,
         len: i32,
     ) -> JvmResult<i32> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::substringWidth({string:?}, {offset:?}, {len:?})");
+        tracing::debug!("javax.microedition.lcdui.Font::substringWidth({string:?}, {offset:?}, {len:?})");
 
         let string = JavaLangString::to_rust_string(jvm, &string).await?;
         let substring = string.chars().skip(offset as usize).take(len as usize).collect::<RustString>();
@@ -172,7 +186,7 @@ impl Font {
     }
 
     async fn char_width(_: &Jvm, context: &mut WieJvmContext, _: ClassInstanceRef<Self>, char: JavaChar) -> JvmResult<i32> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::charWidth({char:?})");
+        tracing::debug!("javax.microedition.lcdui.Font::charWidth({char:?})");
 
         let string = RustString::from_utf16(&[char]).unwrap();
 
@@ -187,7 +201,7 @@ impl Font {
         offset: i32,
         len: i32,
     ) -> JvmResult<i32> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::charsWidth({chars:?}, {offset:?}, {len:?})");
+        tracing::debug!("javax.microedition.lcdui.Font::charsWidth({chars:?}, {offset:?}, {len:?})");
 
         let chars = jvm.load_array(&chars, offset as _, len as _).await?;
         let string = RustString::from_utf16(&chars).unwrap();
