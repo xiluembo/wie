@@ -50,6 +50,14 @@ impl Audio {
         Ok(())
     }
 
+    /// Duration of a loaded sequence in milliseconds.
+    pub fn duration(&self, audio_handle: AudioHandle) -> Result<u64, AudioError> {
+        self.files
+            .get(&audio_handle)
+            .map(|sequence| sequence.duration)
+            .ok_or(AudioError::InvalidHandle)
+    }
+
     pub fn stop(&mut self, audio_handle: AudioHandle) {
         if self.playing.remove(&audio_handle) {
             self.sink.send(AudioCommand::Stop { handle: audio_handle });
