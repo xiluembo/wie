@@ -155,6 +155,14 @@ impl FilesystemOverlay {
         filesystem.truncate(&self.aid, &normalized, len).await;
         filesystem.size(&self.aid, &normalized).await == Some(len)
     }
+
+    /// Remove a persistent (platform) file. Archive/virtual entries are left alone.
+    pub async fn remove(&self, path: &str) -> bool {
+        let Some(normalized) = normalize_guest_path(path) else {
+            return false;
+        };
+        self.platform.filesystem().remove(&self.aid, &normalized).await
+    }
 }
 
 #[cfg(test)]
@@ -222,6 +230,10 @@ mod tests {
             let mut files = self.files.lock();
             let file = files.entry((aid.to_string(), path.to_string())).or_default();
             file.resize(len, 0);
+        }
+
+        async fn remove(&self, aid: &str, path: &str) -> bool {
+            self.files.lock().remove(&(aid.to_string(), path.to_string())).is_some()
         }
     }
 

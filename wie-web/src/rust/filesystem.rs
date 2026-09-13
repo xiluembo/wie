@@ -85,4 +85,14 @@ impl Filesystem for WebFilesystem {
 
         store.set(key, &next).await;
     }
+
+    async fn remove(&self, aid: &str, path: &str) -> bool {
+        let key = make_key(aid, path);
+        let store = self.store().await;
+        if store.get(key.clone()).await.is_none() {
+            return false;
+        }
+        store.delete(key).await;
+        true
+    }
 }
