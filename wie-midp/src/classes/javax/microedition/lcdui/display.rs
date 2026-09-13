@@ -125,6 +125,7 @@ impl Display {
                 JavaFieldProto::new("repaintPending", "Z", FieldAccessFlags::PRIVATE),
                 // MIDP: Canvas.serviceRepaints() must no-op if called from paint().
                 JavaFieldProto::new("isPainting", "Z", FieldAccessFlags::PRIVATE),
+                JavaFieldProto::new("paintCount", "I", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("alertGeneration", "I", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("tickerGeneration", "I", FieldAccessFlags::PRIVATE),
             ],
@@ -927,7 +928,15 @@ impl Display {
 
             screen.paint(&*image);
         }
-        jvm.collect_garbage()?;
+
+        // serviceRepaints can run every game tick; a full GC per frame tanks WIPI titles.
+        let paints: i32 = jvm.get_field(&this, "paintCount", "I").await?;
+        let paints = paints.wrapping_add(1);
+        let mut this = this;
+        jvm.put_field(&mut this, "paintCount", "I", paints).await?;
+        if paints & 31 == 0 {
+            jvm.collect_garbage()?;
+        }
 
         Ok(())
     }

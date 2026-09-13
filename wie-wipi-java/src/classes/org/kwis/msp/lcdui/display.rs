@@ -7,7 +7,7 @@ use rustjava_runtime::classes::java::lang::{Object, Runnable, String};
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
-use wie_midp::classes::javax::microedition::lcdui::Display as MidpDisplay;
+use wie_midp::classes::javax::microedition::lcdui::{Display as MidpDisplay, Image as MidpImage};
 
 use crate::classes::{
     net::wie::WIPIKeyCode,
@@ -401,8 +401,25 @@ impl Display {
         Ok(0)
     }
 
-    async fn flush(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.lcdui.Display::flush({this:?})");
+    async fn flush(jvm: &Jvm, context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.lcdui.Display::flush({this:?})");
+
+        let midp_display: ClassInstanceRef<MidpDisplay> = jvm
+            .get_field(&this, "midpDisplay", "Ljavax/microedition/lcdui/Display;")
+            .await?;
+        if midp_display.is_null() {
+            return Ok(());
+        }
+
+        let screen_image: ClassInstanceRef<MidpImage> = jvm
+            .get_field(&midp_display, "screenImage", "Ljavax/microedition/lcdui/Image;")
+            .await?;
+        if screen_image.is_null() {
+            return Ok(());
+        }
+
+        let image = MidpImage::image(jvm, &screen_image).await?;
+        context.system().platform().screen().paint(&*image);
 
         Ok(())
     }

@@ -119,13 +119,7 @@ impl Screen for WindowHandle {
     }
 
     fn paint(&self, image: &dyn Image) {
-        let data = image
-            .colors()
-            .iter()
-            .map(|x| ((x.a as u32) << 24) | ((x.r as u32) << 16) | ((x.g as u32) << 8) | (x.b as u32))
-            .collect::<Vec<_>>();
-
-        if let Err(error) = self.send_event(WindowInternalEvent::Paint(data)) {
+        if let Err(error) = self.send_event(WindowInternalEvent::Paint(image.to_argb8888())) {
             tracing::warn!("Failed to send paint event: {error}");
         }
     }

@@ -45,6 +45,44 @@ pub struct Color {
     pub b: u8,
 }
 
+impl Color {
+    pub fn to_argb8888(self) -> u32 {
+        ((self.a as u32) << 24) | ((self.r as u32) << 16) | ((self.g as u32) << 8) | (self.b as u32)
+    }
+}
+
+fn color_from_raw_pixel(raw: &[u8], width: u32, bpp: u32, x: i32, y: i32) -> Option<Color> {
+    if x < 0 || y < 0 || bpp == 0 {
+        return None;
+    }
+    let offset = (y as u32).checked_mul(width)?.checked_add(x as u32)? as usize * bpp as usize;
+    match bpp {
+        1 => raw.get(offset).copied().map(Rgb332Pixel::to_color),
+        2 => {
+            let bytes = raw.get(offset..offset + 2)?;
+            Some(Rgb565Pixel::to_color(u16::from_le_bytes([bytes[0], bytes[1]])))
+        }
+        4 => {
+            let bytes = raw.get(offset..offset + 4)?;
+            Some(ArgbPixel::to_color(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])))
+        }
+        _ => None,
+    }
+}
+
+fn raw_to_argb8888(raw: &[u8], bpp: u32) -> Option<Vec<u32>> {
+    match bpp {
+        4 if raw.len() % 4 == 0 => Some(pod_collect_to_vec(raw)),
+        2 if raw.len() % 2 == 0 => Some(
+            raw.chunks_exact(2)
+                .map(|chunk| Rgb565Pixel::to_color(u16::from_le_bytes([chunk[0], chunk[1]])).to_argb8888())
+                .collect(),
+        ),
+        1 => Some(raw.iter().copied().map(|value| Rgb332Pixel::to_color(value).to_argb8888()).collect()),
+        _ => None,
+    }
+}
+
 pub trait Image: Send {
     fn width(&self) -> u32;
     fn height(&self) -> u32;
@@ -52,6 +90,18 @@ pub trait Image: Send {
     fn get_pixel(&self, x: i32, y: i32) -> Color;
     fn raw(&self) -> Cow<'_, [u8]>;
     fn colors(&self) -> Vec<Color>;
+
+    /// Packed host framebuffer (`0xAARRGGBB`). Avoids a `Color` intermediate on present.
+    fn to_argb8888(&self) -> Vec<u32> {
+        let expected = self.width() as usize * self.height() as usize * self.bytes_per_pixel() as usize;
+        let raw = self.raw();
+        if raw.len() == expected {
+            if let Some(pixels) = raw_to_argb8888(&raw, self.bytes_per_pixel()) {
+                return pixels;
+            }
+        }
+        self.colors().into_iter().map(Color::to_argb8888).collect()
+    }
 }
 
 pub trait ImageBuffer: Send {
@@ -564,6 +614,11 @@ where
             return;
         }
 
+        // One copy of the source; Java images otherwise pay a JVM array read per pixel.
+        let src_raw = src.raw();
+        let src_bpp = src.bytes_per_pixel();
+        let src_width = src.width();
+
         let x_step = if dx > sx { -1 } else { 1 };
         let y_step = if dy > sy { -1 } else { 1 };
         let mut y = if y_step < 0 { y_end - 1 } else { y_start };
@@ -577,7 +632,10 @@ where
                     && (py as i64) >= clip.y as i64
                     && (py as i64) < clip.y as i64 + clip.height as i64
                 {
-                    self.blend_pixel(px, py, src.get_pixel((sx as i64 + x) as i32, (sy as i64 + y) as i32));
+                    let sx = (sx as i64 + x) as i32;
+                    let sy = (sy as i64 + y) as i32;
+                    let color = color_from_raw_pixel(&src_raw, src_width, src_bpp, sx, sy).unwrap_or_else(|| src.get_pixel(sx, sy));
+                    self.blend_pixel(px, py, color);
                 }
 
                 x += x_step;
@@ -762,9 +820,30 @@ where
     }
 
     fn fill_rect(&mut self, x: i32, y: i32, w: u32, h: u32, color: Color, clip: Clip) {
-        // TODO use put_pixels
-        for py in clamp_span(y, h, self.image_buffer.height()) {
-            for px in clamp_span(x, w, self.image_buffer.width()) {
+        let x0 = (x as i64).max(0).max(clip.x as i64);
+        let y0 = (y as i64).max(0).max(clip.y as i64);
+        let x1 = (x as i64 + w as i64)
+            .min(self.image_buffer.width() as i64)
+            .min(clip.x as i64 + clip.width as i64);
+        let y1 = (y as i64 + h as i64)
+            .min(self.image_buffer.height() as i64)
+            .min(clip.y as i64 + clip.height as i64);
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+
+        // Opaque fills write a row at a time. XOR / alpha still go through plot().
+        if !self.xor_mode && color.a == 255 {
+            let row_width = (x1 - x0) as u32;
+            let row = alloc::vec![color; row_width as usize];
+            for py in y0..y1 {
+                self.image_buffer.put_pixels(x0 as i32, py as i32, row_width, &row);
+            }
+            return;
+        }
+
+        for py in y0 as i32..y1 as i32 {
+            for px in x0 as i32..x1 as i32 {
                 self.plot(px, py, color, &clip);
             }
         }

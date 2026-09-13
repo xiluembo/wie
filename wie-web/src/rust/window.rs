@@ -43,7 +43,18 @@ impl Screen for WindowImpl {
             .dyn_into::<CanvasRenderingContext2d>()
             .unwrap();
 
-        let image_data = image.colors().into_iter().flat_map(|x| [x.r, x.g, x.b, x.a]).collect::<Vec<_>>();
+        let image_data = image
+            .to_argb8888()
+            .into_iter()
+            .flat_map(|pixel| {
+                [
+                    ((pixel >> 16) & 0xff) as u8,
+                    ((pixel >> 8) & 0xff) as u8,
+                    (pixel & 0xff) as u8,
+                    ((pixel >> 24) & 0xff) as u8,
+                ]
+            })
+            .collect::<Vec<_>>();
         let data = ImageData::new_with_u8_clamped_array_and_sh(Clamped(&image_data), self.width(), self.height()).unwrap();
 
         context.put_image_data(&data, 0.0, 0.0).unwrap();
