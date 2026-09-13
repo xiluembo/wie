@@ -1,6 +1,6 @@
 use alloc::vec;
 
-use jvm::{Array, ClassInstanceRef, Jvm, Result as JvmResult};
+use jvm::{Array, ClassInstanceRef, Jvm, Result as JvmResult, runtime::JavaLangString};
 use jvm_class_proto::JavaMethodProto;
 use jvm_types::{ClassAccessFlags, MethodAccessFlags};
 use rustjava_runtime::classes::java::{io::File as JavaFile, lang::String, util::Vector};
@@ -152,10 +152,10 @@ impl FileSystem {
     }
 
     async fn is_file(jvm: &Jvm, _: &mut WieJvmContext, name: ClassInstanceRef<String>) -> JvmResult<bool> {
-        tracing::debug!("org.kwis.msp.io.FileSystem::is_file({name:?})");
-
+        let path = JavaLangString::to_rust_string(jvm, &name).await?;
         let file = jvm.new_class("java/io/File", "(Ljava/lang/String;)V", (name,)).await?;
         let is_file = jvm.invoke_virtual(&file, "java/io/File", "isFile", "()Z", ()).await?;
+        tracing::debug!("org.kwis.msp.io.FileSystem::isFile({path:?}) -> {is_file}");
 
         Ok(is_file)
     }
@@ -215,16 +215,29 @@ impl FileSystem {
         Ok(ClassInstanceRef::new(None))
     }
 
-    async fn remove(_: &Jvm, _: &mut WieJvmContext, filename: ClassInstanceRef<String>) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.io.FileSystem::remove({filename:?})");
+    async fn remove(jvm: &Jvm, context: &mut WieJvmContext, filename: ClassInstanceRef<String>) -> JvmResult<()> {
+        if filename.is_null() {
+            return Err(jvm.exception("java/lang/NullPointerException", "filename is null").await);
+        }
+        let path = JavaLangString::to_rust_string(jvm, &filename).await?;
+        tracing::debug!("org.kwis.msp.io.FileSystem::remove({path:?})");
+
+        if !context.system().filesystem().is_valid_path(&path) {
+            return Ok(());
+        }
+
+        let file = jvm.new_class("java/io/File", "(Ljava/lang/String;)V", (filename,)).await?;
+        let deleted: bool = jvm.invoke_virtual(&file, "java/io/File", "delete", "()Z", ()).await?;
+        tracing::debug!("org.kwis.msp.io.FileSystem::remove({path:?}) -> {deleted}");
 
         Ok(())
     }
 
-    async fn remove_with_flag(_: &Jvm, _: &mut WieJvmContext, filename: ClassInstanceRef<String>, flag: i32) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.io.FileSystem::remove({filename:?}, {flag})");
-
-        Ok(())
+    async fn remove_with_flag(jvm: &Jvm, context: &mut WieJvmContext, filename: ClassInstanceRef<String>, flag: i32) -> JvmResult<()> {
+        // Access flag (PRIVATE/SHARED/SYSTEM) is ignored on the desktop overlay.
+        let path = JavaLangString::to_rust_string(jvm, &filename).await?;
+        tracing::debug!("org.kwis.msp.io.FileSystem::remove({path:?}, flag={flag})");
+        Self::remove(jvm, context, filename).await
     }
 
     async fn mkdir_without_flag(_: &Jvm, _: &mut WieJvmContext, dirname: ClassInstanceRef<String>) -> JvmResult<()> {
@@ -251,10 +264,11 @@ impl FileSystem {
         Ok(ClassInstanceRef::new(None))
     }
 
-    async fn is_file_with_flag(_: &Jvm, _: &mut WieJvmContext, name: ClassInstanceRef<String>, flag: i32) -> JvmResult<bool> {
-        tracing::warn!("stub org.kwis.msp.io.FileSystem::isFile({name:?}, {flag})");
-
-        Ok(false)
+    async fn is_file_with_flag(jvm: &Jvm, context: &mut WieJvmContext, name: ClassInstanceRef<String>, flag: i32) -> JvmResult<bool> {
+        // Access flag (PRIVATE/SHARED/SYSTEM) is ignored on the desktop overlay.
+        let path = JavaLangString::to_rust_string(jvm, &name).await?;
+        tracing::debug!("org.kwis.msp.io.FileSystem::isFile({path:?}, flag={flag})");
+        Self::is_file(jvm, context, name).await
     }
 
     async fn is_directory_without_flag(jvm: &Jvm, _: &mut WieJvmContext, name: ClassInstanceRef<String>) -> JvmResult<bool> {

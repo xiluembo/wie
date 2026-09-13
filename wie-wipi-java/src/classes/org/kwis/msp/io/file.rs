@@ -111,9 +111,8 @@ impl File {
         mode: i32,
         flag: i32,
     ) -> JvmResult<()> {
-        tracing::debug!("org.kwis.msp.io.File::<init>({this:?}, {filename:?}, {mode:?}, {flag:?})");
-
         let name = JavaLangString::to_rust_string(jvm, &filename).await?;
+        tracing::debug!("org.kwis.msp.io.File::<init>({name:?}, mode={mode:?}, flag={flag:?})");
         if name.is_empty() {
             return Err(jvm.exception("java/io/IOException", "Invalid filename").await);
         }
@@ -127,8 +126,10 @@ impl File {
         let mode_string = if mode == Mode::READ_ONLY { "r" } else { "w" };
         let mode_string = JavaLangString::from_rust_string(jvm, mode_string).await?;
 
+        tracing::debug!("org.kwis.msp.io.File::<init>({name:?}): creating java.io.File");
         let file = jvm.new_class("java/io/File", "(Ljava/lang/String;)V", (filename,)).await?;
 
+        tracing::debug!("org.kwis.msp.io.File::<init>({name:?}): opening RandomAccessFile");
         let raf = jvm
             .new_class(
                 "java/io/RandomAccessFile",
@@ -144,9 +145,11 @@ impl File {
         let raf = raf.unwrap();
 
         if mode == Mode::WRITE_TRUNC {
+            tracing::debug!("org.kwis.msp.io.File::<init>({name:?}): setLength(0)");
             let _: () = jvm.invoke_virtual(&raf, "java/io/RandomAccessFile", "setLength", "(J)V", (0i64,)).await?;
         }
 
+        tracing::debug!("org.kwis.msp.io.File::<init>({name:?}): getFD + FileInputStream");
         let descriptor: ClassInstanceRef<FileDescriptor> = jvm
             .invoke_virtual(&raf, "java/io/RandomAccessFile", "getFD", "()Ljava/io/FileDescriptor;", ())
             .await?;
@@ -162,6 +165,7 @@ impl File {
         jvm.put_field(&mut this, "closed", "Z", false).await?;
         jvm.put_field(&mut this, "outputStreamOpen", "Z", false).await?;
 
+        tracing::debug!("org.kwis.msp.io.File::<init>({name:?}): done");
         Ok(())
     }
 
