@@ -120,6 +120,25 @@ impl LgtEmulator {
             system.filesystem().add_virtual(filename, data.clone())
         }
 
+        // WIPI apps open packaged assets via org.kwis.msp.io.File on the virtual FS.
+        // Mount JAR entries (menu.pzx, *.mmf, ...) alongside the archive itself.
+        if let Some(jar) = files.get(jar_filename) {
+            match extract_zip(jar) {
+                Ok(entries) => {
+                    let mut mounted = 0usize;
+                    for (path, data) in entries {
+                        if path.ends_with('/') {
+                            continue;
+                        }
+                        system.filesystem().add_virtual(&path, data);
+                        mounted += 1;
+                    }
+                    tracing::info!("Mounted {mounted} entries from {jar_filename}");
+                }
+                Err(error) => tracing::warn!("Failed to extract {jar_filename} for virtual FS: {error}"),
+            }
+        }
+
         Allocator::init(&mut core)?;
 
         let main_class_name = main_class_name.map(|x| x.replace('.', "/"));

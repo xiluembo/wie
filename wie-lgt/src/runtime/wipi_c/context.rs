@@ -97,11 +97,14 @@ impl WIPICContext for LgtWIPICContext {
                 .invoke_virtual(&stream, "java/io/InputStream", "available", "()I", ())
                 .await
                 .unwrap();
+            tracing::debug!("WIPIC get_resource_size({name}) via ClassLoader size={available}");
             return Ok(Some(available as _));
         }
         self.jvm.collect_garbage().unwrap();
 
-        Ok(self.system.filesystem().size(name).await)
+        let size = self.system.filesystem().size(name).await;
+        tracing::debug!("WIPIC get_resource_size({name}) via FS size={size:?}");
+        Ok(size)
     }
 
     async fn read_resource(&self, name: &str) -> Result<Vec<u8>> {

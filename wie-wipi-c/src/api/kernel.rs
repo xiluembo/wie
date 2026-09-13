@@ -171,16 +171,17 @@ pub async fn get_resource_id(context: &mut dyn WIPICContext, ptr_name: WIPICWord
 
     let raw_name = read_null_terminated_string_bytes(context, ptr_name)?;
     let name = encoding_rs::EUC_KR.decode(&raw_name).0;
-    tracing::debug!("  resource name: {name}");
 
     let size = context.get_resource_size(&name).await?;
 
     if size.is_none() {
+        tracing::debug!("MC_knlGetResourceID missing resource: {name}");
         if ptr_size != 0 {
             write_generic(context, ptr_size, 0u32)?;
         }
         return Ok(-12); // M_E_NOENT
     }
+    tracing::debug!("MC_knlGetResourceID found: {name} size={}", size.unwrap());
 
     let size = size.unwrap();
 
