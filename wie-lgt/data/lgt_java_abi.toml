@@ -31,6 +31,62 @@ vtable = [
     { name = "available", descriptor = "()I", index = 14 },
     { name = "close", descriptor = "()V", index = 15 },
 ]
+# Mirror of InputStream slots for the write side. Needed so WIPIFileOutputStream /
+# FilterOutputStream/DataOutputStream can override write(I)V in the LGT vtable.
+[[class]]
+name = "java/io/OutputStream"
+vtable = [
+    { name = "write", descriptor = "(I)V", index = 10 },
+    { name = "write", descriptor = "([B)V", index = 11 },
+    { name = "write", descriptor = "([BII)V", index = 12 },
+    { name = "flush", descriptor = "()V", index = 13 },
+    { name = "close", descriptor = "()V", index = 14 },
+]
+
+# DataOutput methods sit right after OutputStream (10-14).
+# LGT AOT save path uses writeInt@19 and writeBoolean@15.
+[[class]]
+name = "java/io/DataOutputStream"
+vtable = [
+    { name = "writeBoolean", descriptor = "(Z)V", index = 15 },
+    { name = "writeByte", descriptor = "(I)V", index = 16 },
+    { name = "writeShort", descriptor = "(I)V", index = 17 },
+    { name = "writeChar", descriptor = "(I)V", index = 18 },
+    { name = "writeInt", descriptor = "(I)V", index = 19 },
+    { name = "writeLong", descriptor = "(J)V", index = 20 },
+    { name = "writeFloat", descriptor = "(F)V", index = 21 },
+    { name = "writeDouble", descriptor = "(D)V", index = 22 },
+    { name = "writeBytes", descriptor = "(Ljava/lang/String;)V", index = 23 },
+    { name = "writeChars", descriptor = "(Ljava/lang/String;)V", index = 24 },
+    { name = "writeUTF", descriptor = "(Ljava/lang/String;)V", index = 25 },
+]
+
+[[class]]
+name = "java/io/DataOutput"
+vtable = [
+    { name = "writeBoolean", descriptor = "(Z)V", index = 15 },
+    { name = "writeByte", descriptor = "(I)V", index = 16 },
+    { name = "writeShort", descriptor = "(I)V", index = 17 },
+    { name = "writeChar", descriptor = "(I)V", index = 18 },
+    { name = "writeInt", descriptor = "(I)V", index = 19 },
+    { name = "writeLong", descriptor = "(J)V", index = 20 },
+    { name = "writeFloat", descriptor = "(F)V", index = 21 },
+    { name = "writeDouble", descriptor = "(D)V", index = 22 },
+    { name = "writeBytes", descriptor = "(Ljava/lang/String;)V", index = 23 },
+    { name = "writeChars", descriptor = "(Ljava/lang/String;)V", index = 24 },
+    { name = "writeUTF", descriptor = "(Ljava/lang/String;)V", index = 25 },
+]
+
+# LGT AOT loads BAOS slot +0x44 as byte[]; word 0 is the class pointer so
+# +0x44 = method index 16 → toByteArray(); size() is the no-arg neighbor @15.
+[[class]]
+name = "java/io/ByteArrayOutputStream"
+vtable_size = 18
+vtable = [
+    { name = "size", descriptor = "()I", index = 15 },
+    { name = "toByteArray", descriptor = "()[B", index = 16 },
+    { name = "reset", descriptor = "()V", index = 17 },
+]
 [[class]]
 name = "java/io/Reader"
 vtable = [
